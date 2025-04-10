@@ -1,4 +1,3 @@
-
 // == Std crates
 use std::io;
 
@@ -11,11 +10,11 @@ use thiserror::Error;
 // == Private, inner types
 #[derive(Debug, PartialEq)]
 enum PyDictParseState {
-    Root,   // Root state, next can be a dict or eof
-    Dict,   // Inner dict state, next can be a string or null
-    Key,    // Key string state, next can be a string
-    Value,  // Value string state, next can be a string or null
-    Eof     // End of file state, terminal
+    Root,  // Root state, next can be a dict or eof
+    Dict,  // Inner dict state, next can be a string or null
+    Key,   // Key string state, next can be a string
+    Value, // Value string state, next can be a string or null
+    Eof,   // End of file state, terminal
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]
@@ -74,7 +73,9 @@ impl<ReadT: io::Read> P4PyDictParser<ReadT> {
         }
     }
 
-    pub fn get_next_kvp<'b>(&'b mut self) -> Result<Option<P4KeyValuePair<'b>>, P4PyDictParseError> {
+    pub fn get_next_kvp<'b>(
+        &'b mut self,
+    ) -> Result<Option<P4KeyValuePair<'b>>, P4PyDictParseError> {
         // Loop until we find a key-value pair
         while self.state != PyDictParseState::Eof {
             if self.advance()? {
@@ -106,11 +107,11 @@ impl<ReadT: io::Read> P4PyDictParser<ReadT> {
                         }
 
                         PyDictParseState::Dict
-                    },
+                    }
                     PyDictTag::Eof => PyDictParseState::Eof,
                     _ => unreachable!(),
                 }
-            },
+            }
             PyDictParseState::Dict => {
                 // We can have a string or a null (closing dict) in the dict state
                 match self.expect_tags(&[PyDictTag::String, PyDictTag::Null])? {
@@ -118,10 +119,10 @@ impl<ReadT: io::Read> P4PyDictParser<ReadT> {
                     PyDictTag::Null => {
                         // Dict is closed, so we can increment the dict index
                         PyDictParseState::Root
-                    },
+                    }
                     _ => unreachable!(),
                 }
-            },
+            }
             PyDictParseState::Key => {
                 // Extract the string
                 Self::read_string(&mut self.reader, &mut self.current_key_buffer)?;
@@ -142,7 +143,7 @@ impl<ReadT: io::Read> P4PyDictParser<ReadT> {
                     PyDictTag::Null => PyDictParseState::Root,
                     _ => unreachable!(),
                 }
-            },
+            }
             PyDictParseState::Eof => {
                 unreachable!()
             }
@@ -151,7 +152,7 @@ impl<ReadT: io::Read> P4PyDictParser<ReadT> {
         Ok(should_yield)
     }
 
-    fn expect_tags(&mut self, tags : &'static [PyDictTag]) -> Result<PyDictTag, P4PyDictParseError> {
+    fn expect_tags(&mut self, tags: &'static [PyDictTag]) -> Result<PyDictTag, P4PyDictParseError> {
         let mut type_buffer = [0u8; 1];
         match self.reader.read_exact(&mut type_buffer) {
             Ok(_) => {
@@ -159,24 +160,28 @@ impl<ReadT: io::Read> P4PyDictParser<ReadT> {
                 if tags.iter().any(|&tag| tag == found_tag) {
                     return Ok(found_tag);
                 } else {
-                    return Err(P4PyDictParseError::InvalidTag { tag: type_buffer[0] });
+                    return Err(P4PyDictParseError::InvalidTag {
+                        tag: type_buffer[0],
+                    });
                 }
-            },
-            Err(ref e) if e.kind() == io::ErrorKind::UnexpectedEof => { Ok(PyDictTag::Eof) },
-            Err(e) => Err(P4PyDictParseError::Io(e))
+            }
+            Err(ref e) if e.kind() == io::ErrorKind::UnexpectedEof => Ok(PyDictTag::Eof),
+            Err(e) => Err(P4PyDictParseError::Io(e)),
         }
     }
 
     // We receive the string with the reader already past the 's' tag at the beginning, so are expecting '<LEN:u32_le>[u8;LEN]'
-    fn read_string(reader : &mut ReadT, buffer : &mut Vec<u8>) -> Result<(), P4PyDictParseError> {
+    fn read_string(reader: &mut ReadT, buffer: &mut Vec<u8>) -> Result<(), P4PyDictParseError> {
         buffer.clear();
-        
+
         let mut len_buffer = [0u8; 4];
         // Read the length of the string
         let len = match reader.read_exact(&mut len_buffer) {
             Ok(_) => Ok(u32::from_le_bytes(len_buffer)),
-            Err(ref e) if e.kind() == io::ErrorKind::UnexpectedEof => { Err(P4PyDictParseError::UnexpectedEof) },
-            Err(e) => Err(P4PyDictParseError::Io(e))
+            Err(ref e) if e.kind() == io::ErrorKind::UnexpectedEof => {
+                Err(P4PyDictParseError::UnexpectedEof)
+            }
+            Err(e) => Err(P4PyDictParseError::Io(e)),
         }?;
 
         // Read the string
@@ -184,12 +189,13 @@ impl<ReadT: io::Read> P4PyDictParser<ReadT> {
 
         match reader.read_exact(&mut buffer[..]) {
             Ok(_) => Ok(()),
-            Err(ref e) if e.kind() == io::ErrorKind::UnexpectedEof => { Err(P4PyDictParseError::UnexpectedEof) },
-            Err(e) => Err(P4PyDictParseError::Io(e))
+            Err(ref e) if e.kind() == io::ErrorKind::UnexpectedEof => {
+                Err(P4PyDictParseError::UnexpectedEof)
+            }
+            Err(e) => Err(P4PyDictParseError::Io(e)),
         }
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -197,12 +203,21 @@ mod tests {
     use std::fs;
 
     #[test]
-    fn test_reader() {
-        let mut reader = fs::File::open("C:\\EpicGames\\longyeet.pyc").unwrap();
+    // Simple smoke test to ensure we can read a py dict list, as it's a pain to embed it in the file in a readable way
+    fn test_py_dict_reader() {
+        let mut reader = fs::File::open("./test_data/changes.pyc").unwrap();
         let mut parser = P4PyDictParser::new(&mut reader);
 
+        let mut current_dict_index = None;
+        let mut num_records = 0;
         while let Some(kvp) = parser.get_next_kvp().unwrap() {
-            println!("{:?}", kvp);
+            if Some(kvp.dict_index) != current_dict_index {
+                // Record completed
+                current_dict_index = Some(kvp.dict_index);
+                num_records += 1;
+            }
         }
+
+        assert_eq!(num_records, 8);
     }
 }
